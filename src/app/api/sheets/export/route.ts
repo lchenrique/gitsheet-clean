@@ -13,6 +13,6 @@ export async function POST(req: NextRequest) {
   }
 
   const body = (await req.json()) as ExportRequest;
-  markMonthExported(session.login, body.month);
+  await markMonthExported(session.login, body.month);
   return NextResponse.json({ ok: true });
 }

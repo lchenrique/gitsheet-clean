@@ -9,5 +9,5 @@ export default async function HomePage() {
     redirect("/login");
   }
 
-  redirect(getSyncConfig(session.login) ? "/sheet" : "/repos");
+  redirect((await getSyncConfig(session.login)) ? "/sheet" : "/repos");
 }

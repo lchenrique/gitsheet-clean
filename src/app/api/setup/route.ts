@@ -26,7 +26,7 @@ export async function POST(req: NextRequest) {
   const body = (await req.json()) as SetupRequest;
   const initialMonth = body.startDate.slice(0, 7);
 
-  upsertSyncConfig({
+  await upsertSyncConfig({
     userId: session.login,
     repos: body.repos,
     includeSaturday: body.includeSaturday,
@@ -44,7 +44,7 @@ export async function POST(req: NextRequest) {
     githubAccessToken: session.accessToken,
   });
 
-  persistInitialDrafts(session.login, body.drafts);
+  await persistInitialDrafts(session.login, body.drafts);
 
   return NextResponse.json({ ok: true });
 }

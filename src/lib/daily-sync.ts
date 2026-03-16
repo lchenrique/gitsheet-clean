@@ -282,7 +282,7 @@ export async function syncDateForConfig(config: SyncConfigRecord, date: string) 
 }
 
 export async function syncTodayForUser(userId: string) {
-  const config = getSyncConfig(userId);
+  const config = await getSyncConfig(userId);
   if (!config || config.status !== "active") {
     return { synced: false, reason: "missing-config" as const, userId };
   }
@@ -291,7 +291,7 @@ export async function syncTodayForUser(userId: string) {
 }
 
 export async function syncAllActiveUsersForDate(date: string) {
-  const configs = listActiveSyncConfigs();
+  const configs = await listActiveSyncConfigs();
   const results = [];
 
   for (const config of configs) {
@@ -330,7 +330,7 @@ async function syncDateForConfigWithTrigger(
       (dayOfWeek === 0 && !config.includeSunday);
 
     if (shouldSkip) {
-      recordSyncRun({
+      await recordSyncRun({
         userId: config.userId,
         runDate: date,
         trigger,
@@ -341,8 +341,8 @@ async function syncDateForConfigWithTrigger(
       return { synced: false, reason: "calendar-skip" as const, date, userId: config.userId };
     }
 
-    if (hasEntriesForSyncKey(config.userId, syncKey)) {
-      recordSyncRun({
+    if (await hasEntriesForSyncKey(config.userId, syncKey)) {
+      await recordSyncRun({
         userId: config.userId,
         runDate: date,
         trigger,
@@ -355,7 +355,7 @@ async function syncDateForConfigWithTrigger(
 
     const commits = filterRelevantCommits(await fetchCommitsForDate(date, config));
     if (!commits.length) {
-      upsertSyncConfig({
+      await upsertSyncConfig({
         userId: config.userId,
         repos: config.repos,
         includeSaturday: config.includeSaturday,
@@ -373,7 +373,7 @@ async function syncDateForConfigWithTrigger(
         githubPat: config.githubPat,
         githubAccessToken: config.githubAccessToken,
       });
-      recordSyncRun({
+      await recordSyncRun({
         userId: config.userId,
         runDate: date,
         trigger,
@@ -389,8 +389,8 @@ async function syncDateForConfigWithTrigger(
       throw new Error(`A IA nao conseguiu gerar um resumo valido para ${date}.`);
     }
 
-    persistDailyDraft(config.userId, date, entries);
-    upsertSyncConfig({
+    await persistDailyDraft(config.userId, date, entries);
+    await upsertSyncConfig({
       userId: config.userId,
       repos: config.repos,
       includeSaturday: config.includeSaturday,
@@ -408,7 +408,7 @@ async function syncDateForConfigWithTrigger(
       githubPat: config.githubPat,
       githubAccessToken: config.githubAccessToken,
     });
-    recordSyncRun({
+    await recordSyncRun({
       userId: config.userId,
       runDate: date,
       trigger,
@@ -432,7 +432,7 @@ async function syncDateForConfigWithTrigger(
     return { synced: true, reason: "ok" as const, date, userId: config.userId, entries };
   } catch (error) {
     const message = error instanceof Error ? error.message : "Erro desconhecido";
-    recordSyncRun({
+    await recordSyncRun({
       userId: config.userId,
       runDate: date,
       trigger,
@@ -443,3 +443,4 @@ async function syncDateForConfigWithTrigger(
     throw error;
   }
 }
+

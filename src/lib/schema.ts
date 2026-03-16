@@ -1,11 +1,11 @@
-import { index, integer, primaryKey, sqliteTable, text } from "drizzle-orm/sqlite-core";
+import { boolean, index, pgTable, primaryKey, text } from "drizzle-orm/pg-core";
 
-export const syncConfigs = sqliteTable("sync_configs", {
+export const syncConfigs = pgTable("sync_configs", {
   userId: text("user_id").primaryKey(),
   reposJson: text("repos_json").notNull(),
-  includeSaturday: integer("include_saturday", { mode: "boolean" }).notNull().default(false),
-  includeSunday: integer("include_sunday", { mode: "boolean" }).notNull().default(false),
-  telegramReminderEnabled: integer("telegram_reminder_enabled", { mode: "boolean" }).notNull().default(false),
+  includeSaturday: boolean("include_saturday").notNull().default(false),
+  includeSunday: boolean("include_sunday").notNull().default(false),
+  telegramReminderEnabled: boolean("telegram_reminder_enabled").notNull().default(false),
   firstBlockStart: text("first_block_start").notNull().default("09:00"),
   firstBlockEnd: text("first_block_end").notNull().default("13:00"),
   secondBlockStart: text("second_block_start").notNull().default("14:00"),
@@ -21,7 +21,7 @@ export const syncConfigs = sqliteTable("sync_configs", {
   updatedAt: text("updated_at").notNull(),
 });
 
-export const monthlySheets = sqliteTable(
+export const monthlySheets = pgTable(
   "monthly_sheets",
   {
     userId: text("user_id").notNull(),
@@ -35,7 +35,7 @@ export const monthlySheets = sqliteTable(
   }),
 );
 
-export const sheetEntries = sqliteTable(
+export const sheetEntries = pgTable(
   "sheet_entries",
   {
     id: text("id").primaryKey(),
@@ -59,7 +59,7 @@ export const sheetEntries = sqliteTable(
   }),
 );
 
-export const syncRuns = sqliteTable(
+export const syncRuns = pgTable(
   "sync_runs",
   {
     id: text("id").primaryKey(),

@@ -8,5 +8,5 @@ export async function GET() {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  return NextResponse.json({ sheets: listMonthlySheets(session.login) });
+  return NextResponse.json({ sheets: await listMonthlySheets(session.login) });
 }

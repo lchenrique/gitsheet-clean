@@ -2,8 +2,8 @@
 export default {
   schema: "./src/lib/schema.ts",
   out: "./drizzle",
-  dialect: "sqlite",
+  dialect: "postgresql",
   dbCredentials: {
-    url: "./.data/gitsheet.sqlite",
+    url: process.env.DATABASE_URL,
   },
 };

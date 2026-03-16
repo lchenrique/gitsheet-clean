@@ -11,6 +11,6 @@ export async function GET(_: NextRequest, { params }: { params: { month: string 
   const today = new Date().toISOString().slice(0, 10);
   return NextResponse.json({
     month: params.month,
-    entries: getSheetEntries(session.login, params.month, today),
+    entries: await getSheetEntries(session.login, params.month, today),
   });
 }

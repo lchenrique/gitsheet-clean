@@ -8,6 +8,6 @@ export async function POST() {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  resetUserWorkspace(session.login);
+  await resetUserWorkspace(session.login);
   return NextResponse.json({ ok: true });
 }

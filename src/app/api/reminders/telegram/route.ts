@@ -9,7 +9,7 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  const config = getSyncConfig(session.login);
+  const config = await getSyncConfig(session.login);
   if (!config) {
     return NextResponse.json({ error: "Configuração não encontrada." }, { status: 404 });
   }
@@ -26,6 +26,6 @@ export async function POST(request: Request) {
     );
   }
 
-  updateTelegramReminder(session.login, body.enabled);
+  await updateTelegramReminder(session.login, body.enabled);
   return NextResponse.json({ ok: true, enabled: body.enabled });
 }

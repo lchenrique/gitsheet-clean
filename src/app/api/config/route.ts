@@ -9,7 +9,7 @@ export async function GET() {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  const config = getSyncConfig(session.login);
+  const config = await getSyncConfig(session.login);
   if (!config) {
     return NextResponse.json({ config: null, syncStatus: null, telegramConfigured: isTelegramConfigured() });
   }
@@ -17,7 +17,7 @@ export async function GET() {
   const { githubPat: _githubPat, githubAccessToken: _githubAccessToken, ...safeConfig } = config;
   return NextResponse.json({
     config: safeConfig,
-    syncStatus: getSyncStatusSummary(session.login),
+    syncStatus: await getSyncStatusSummary(session.login),
     telegramConfigured: isTelegramConfigured(),
   });
 }

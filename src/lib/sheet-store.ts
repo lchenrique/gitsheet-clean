@@ -80,28 +80,29 @@ function mapSyncRun(row: typeof syncRuns.$inferSelect): SyncRunRecord {
   };
 }
 
-export function getSyncConfig(userId: string): SyncConfigRecord | null {
+export async function getSyncConfig(userId: string): Promise<SyncConfigRecord | null> {
   const db = getDb();
-  const row = db.select().from(syncConfigs).where(eq(syncConfigs.userId, userId)).get();
+  const rows = await db.select().from(syncConfigs).where(eq(syncConfigs.userId, userId)).limit(1);
+  const row = rows[0];
   return row ? mapSyncConfig(row) : null;
 }
 
-export function listActiveSyncConfigs(): SyncConfigRecord[] {
+export async function listActiveSyncConfigs(): Promise<SyncConfigRecord[]> {
   const db = getDb();
-  return db
+  const rows = await db
     .select()
     .from(syncConfigs)
-    .where(eq(syncConfigs.status, "active"))
-    .all()
-    .map(mapSyncConfig);
+    .where(eq(syncConfigs.status, "active"));
+  
+  return rows.map(mapSyncConfig);
 }
 
-export function upsertSyncConfig(config: UpsertSyncConfigInput) {
+export async function upsertSyncConfig(config: UpsertSyncConfigInput) {
   const db = getDb();
-  const current = getSyncConfig(config.userId);
+  const current = await getSyncConfig(config.userId);
   const timestamp = nowIso();
 
-  db.insert(syncConfigs)
+  await db.insert(syncConfigs)
     .values({
       userId: config.userId,
       reposJson: JSON.stringify(config.repos),
@@ -142,11 +143,10 @@ export function upsertSyncConfig(config: UpsertSyncConfigInput) {
         githubAccessToken: config.githubAccessToken ?? current?.githubAccessToken ?? null,
         updatedAt: timestamp,
       },
-    })
-    .run();
+    });
 }
 
-export function recordSyncRun(input: {
+export async function recordSyncRun(input: {
   userId: string;
   runDate: string;
   trigger: SyncRunTrigger;
@@ -156,7 +156,7 @@ export function recordSyncRun(input: {
 }) {
   const db = getDb();
 
-  db.insert(syncRuns)
+  await db.insert(syncRuns)
     .values({
       id: crypto.randomUUID(),
       userId: input.userId,
@@ -166,17 +166,16 @@ export function recordSyncRun(input: {
       reason: input.reason,
       message: input.message ?? null,
       createdAt: nowIso(),
-    })
-    .run();
+    });
 }
 
-export function updateTelegramReminder(userId: string, enabled: boolean) {
-  const current = getSyncConfig(userId);
+export async function updateTelegramReminder(userId: string, enabled: boolean) {
+  const current = await getSyncConfig(userId);
   if (!current) {
     return false;
   }
 
-  upsertSyncConfig({
+  await upsertSyncConfig({
     userId,
     repos: current.repos,
     includeSaturday: current.includeSaturday,
@@ -198,22 +197,24 @@ export function updateTelegramReminder(userId: string, enabled: boolean) {
   return true;
 }
 
-export function getSyncStatusSummary(userId: string): SyncStatusSummary {
+export async function getSyncStatusSummary(userId: string): Promise<SyncStatusSummary> {
   const db = getDb();
 
-  const lastRunRow = db
+  const lastRunRows = await db
     .select()
     .from(syncRuns)
     .where(eq(syncRuns.userId, userId))
     .orderBy(desc(syncRuns.createdAt))
-    .get();
+    .limit(1);
+  const lastRunRow = lastRunRows[0];
 
-  const lastErrorRow = db
+  const lastErrorRows = await db
     .select()
     .from(syncRuns)
     .where(and(eq(syncRuns.userId, userId), eq(syncRuns.status, "error")))
     .orderBy(desc(syncRuns.createdAt))
-    .get();
+    .limit(1);
+  const lastErrorRow = lastErrorRows[0];
 
   return {
     lastRun: lastRunRow ? mapSyncRun(lastRunRow) : undefined,
@@ -221,11 +222,11 @@ export function getSyncStatusSummary(userId: string): SyncStatusSummary {
   };
 }
 
-export function ensureMonthlySheet(userId: string, month: string, status: "active" | "archived" = "active") {
+export async function ensureMonthlySheet(userId: string, month: string, status: "active" | "archived" = "active") {
   const db = getDb();
   const timestamp = nowIso();
 
-  db.insert(monthlySheets)
+  await db.insert(monthlySheets)
     .values({
       userId,
       monthKey: month,
@@ -239,14 +240,13 @@ export function ensureMonthlySheet(userId: string, month: string, status: "activ
         status,
         updatedAt: timestamp,
       },
-    })
-    .run();
+    });
 }
 
-export function listMonthlySheets(userId: string): MonthlySheetSummary[] {
+export async function listMonthlySheets(userId: string): Promise<MonthlySheetSummary[]> {
   const db = getDb();
 
-  const rows = db
+  const rows = await db
     .select({
       month: monthlySheets.monthKey,
       status: monthlySheets.status,
@@ -260,8 +260,7 @@ export function listMonthlySheets(userId: string): MonthlySheetSummary[] {
     )
     .where(eq(monthlySheets.userId, userId))
     .groupBy(monthlySheets.userId, monthlySheets.monthKey, monthlySheets.status)
-    .orderBy(desc(monthlySheets.monthKey))
-    .all();
+    .orderBy(desc(monthlySheets.monthKey));
 
   return rows.map((row) => ({
     month: row.month,
@@ -271,45 +270,45 @@ export function listMonthlySheets(userId: string): MonthlySheetSummary[] {
   }));
 }
 
-export function getSheetEntries(userId: string, month: string, todayDate?: string): SheetEntryRecord[] {
+export async function getSheetEntries(userId: string, month: string, todayDate?: string): Promise<SheetEntryRecord[]> {
   const db = getDb();
 
-  return db
+  const rows = await db
     .select()
     .from(sheetEntries)
     .where(and(eq(sheetEntries.userId, userId), eq(sheetEntries.monthKey, month)))
-    .orderBy(sheetEntries.entryDate, sheetEntries.startTime, sheetEntries.createdAt)
-    .all()
-    .map((row) => ({
-      id: row.id,
-      sheetMonth: row.monthKey,
-      date: row.entryDate,
-      project: row.project,
-      description: row.description,
-      startTime: row.startTime,
-      endTime: row.endTime,
-      status: row.status as SheetEntryStatus,
-      source: row.source as SheetEntrySource,
-      generationKey: row.generationKey,
-      syncKey: row.syncKey,
-      createdAt: row.createdAt,
-      updatedAt: row.updatedAt,
-      isNewToday: todayDate ? row.syncKey === `daily:${todayDate}` : false,
-    }));
+    .orderBy(sheetEntries.entryDate, sheetEntries.startTime, sheetEntries.createdAt);
+
+  return rows.map((row) => ({
+    id: row.id,
+    sheetMonth: row.monthKey,
+    date: row.entryDate,
+    project: row.project,
+    description: row.description,
+    startTime: row.startTime,
+    endTime: row.endTime,
+    status: row.status as SheetEntryStatus,
+    source: row.source as SheetEntrySource,
+    generationKey: row.generationKey,
+    syncKey: row.syncKey,
+    createdAt: row.createdAt,
+    updatedAt: row.updatedAt,
+    isNewToday: todayDate ? row.syncKey === `daily:${todayDate}` : false,
+  }));
 }
 
-export function hasEntriesForSyncKey(userId: string, syncKey: string) {
+export async function hasEntriesForSyncKey(userId: string, syncKey: string) {
   const db = getDb();
-  const row = db
+  const rows = await db
     .select({ id: sheetEntries.id })
     .from(sheetEntries)
     .where(and(eq(sheetEntries.userId, userId), eq(sheetEntries.syncKey, syncKey)))
-    .get();
+    .limit(1);
 
-  return Boolean(row);
+  return rows.length > 0;
 }
 
-function insertEntriesForDate(
+async function insertEntriesForDate(
   userId: string,
   date: string,
   entries: TimesheetEntry[],
@@ -320,9 +319,9 @@ function insertEntriesForDate(
   const db = getDb();
   const month = toMonthKey(date);
   const timestamp = nowIso();
-  ensureMonthlySheet(userId, month);
+  await ensureMonthlySheet(userId, month);
 
-  db.delete(sheetEntries)
+  await db.delete(sheetEntries)
     .where(
       and(
         eq(sheetEntries.userId, userId),
@@ -330,14 +329,13 @@ function insertEntriesForDate(
         eq(sheetEntries.status, "draft"),
         inArray(sheetEntries.source, ["ai", "regenerated"]),
       ),
-    )
-    .run();
+    );
 
   if (!entries.length) {
     return;
   }
 
-  db.insert(sheetEntries)
+  await db.insert(sheetEntries)
     .values(
       entries.map((entry, index) => ({
         id: crypto.randomUUID(),
@@ -355,38 +353,38 @@ function insertEntriesForDate(
         createdAt: timestamp,
         updatedAt: timestamp,
       })),
-    )
-    .run();
+    );
 }
 
-export function persistInitialDrafts(userId: string, dayDrafts: DayDraft[]) {
+export async function persistInitialDrafts(userId: string, dayDrafts: DayDraft[]) {
   const syncKey = `initial:${nowIso()}`;
   for (const draft of dayDrafts) {
-    insertEntriesForDate(userId, draft.date, draft.entries, "ai", syncKey, "initial");
+    await insertEntriesForDate(userId, draft.date, draft.entries, "ai", syncKey, "initial");
   }
 }
 
-export function persistDailyDraft(userId: string, date: string, entries: TimesheetEntry[], source: SheetEntrySource = "ai") {
-  insertEntriesForDate(userId, date, entries, source, `daily:${date}`, "daily");
+export async function persistDailyDraft(userId: string, date: string, entries: TimesheetEntry[], source: SheetEntrySource = "ai") {
+  await insertEntriesForDate(userId, date, entries, source, `daily:${date}`, "daily");
 }
 
-export function updateSheetEntry(
+export async function updateSheetEntry(
   userId: string,
   entryId: string,
   patch: Partial<Pick<SheetEntryRecord, "project" | "description" | "startTime" | "endTime" | "status">>,
 ) {
   const db = getDb();
-  const current = db
+  const rows = await db
     .select()
     .from(sheetEntries)
     .where(and(eq(sheetEntries.userId, userId), eq(sheetEntries.id, entryId)))
-    .get();
+    .limit(1);
+  const current = rows[0];
 
   if (!current) {
     return false;
   }
 
-  db.update(sheetEntries)
+  await db.update(sheetEntries)
     .set({
       project: patch.project ?? current.project,
       description: patch.description ?? current.description,
@@ -396,47 +394,50 @@ export function updateSheetEntry(
       source: "manual",
       updatedAt: nowIso(),
     })
-    .where(and(eq(sheetEntries.userId, userId), eq(sheetEntries.id, entryId)))
-    .run();
+    .where(and(eq(sheetEntries.userId, userId), eq(sheetEntries.id, entryId)));
 
   return true;
 }
 
-export function approveSheetEntries(userId: string, month: string, entryIds?: string[]) {
+export async function approveSheetEntries(userId: string, month: string, entryIds?: string[]) {
   const db = getDb();
-  const query = db
-    .update(sheetEntries)
-    .set({
-      status: "approved",
-      updatedAt: nowIso(),
-    });
-
+  
   if (entryIds?.length) {
-    query.where(
-      and(eq(sheetEntries.userId, userId), eq(sheetEntries.monthKey, month), inArray(sheetEntries.id, entryIds)),
-    ).run();
+    await db.update(sheetEntries)
+      .set({
+        status: "approved",
+        updatedAt: nowIso(),
+      })
+      .where(
+        and(eq(sheetEntries.userId, userId), eq(sheetEntries.monthKey, month), inArray(sheetEntries.id, entryIds)),
+      );
     return;
   }
 
-  query.where(and(eq(sheetEntries.userId, userId), eq(sheetEntries.monthKey, month), eq(sheetEntries.status, "draft"))).run();
+  await db.update(sheetEntries)
+    .set({
+      status: "approved",
+      updatedAt: nowIso(),
+    })
+    .where(and(eq(sheetEntries.userId, userId), eq(sheetEntries.monthKey, month), eq(sheetEntries.status, "draft")));
 }
 
-export function markMonthExported(userId: string, month: string) {
+export async function markMonthExported(userId: string, month: string) {
   const db = getDb();
-  db.update(sheetEntries)
+  await db.update(sheetEntries)
     .set({
       status: "exported",
       updatedAt: nowIso(),
     })
-    .where(and(eq(sheetEntries.userId, userId), eq(sheetEntries.monthKey, month), inArray(sheetEntries.status, ["approved", "draft"])))
-    .run();
+    .where(and(eq(sheetEntries.userId, userId), eq(sheetEntries.monthKey, month), inArray(sheetEntries.status, ["approved", "draft"])));
 }
 
-export function resetUserWorkspace(userId: string) {
+export async function resetUserWorkspace(userId: string) {
   const db = getDb();
 
-  db.delete(sheetEntries).where(eq(sheetEntries.userId, userId)).run();
-  db.delete(monthlySheets).where(eq(monthlySheets.userId, userId)).run();
-  db.delete(syncRuns).where(eq(syncRuns.userId, userId)).run();
-  db.delete(syncConfigs).where(eq(syncConfigs.userId, userId)).run();
+  await db.delete(sheetEntries).where(eq(sheetEntries.userId, userId));
+  await db.delete(monthlySheets).where(eq(monthlySheets.userId, userId));
+  await db.delete(syncRuns).where(eq(syncRuns.userId, userId));
+  await db.delete(syncConfigs).where(eq(syncConfigs.userId, userId));
 }
+

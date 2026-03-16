@@ -14,6 +14,6 @@ export async function POST(req: NextRequest) {
   }
 
   const body = (await req.json()) as ApproveRequest;
-  approveSheetEntries(session.login, body.month, body.entryIds);
+  await approveSheetEntries(session.login, body.month, body.entryIds);
   return NextResponse.json({ ok: true });
 }

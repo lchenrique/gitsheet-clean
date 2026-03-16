@@ -12,7 +12,7 @@ export async function PATCH(req: NextRequest, { params }: { params: { entryId: s
   }
 
   const body = (await req.json()) as PatchBody;
-  const updated = updateSheetEntry(session.login, params.entryId, body);
+  const updated = await updateSheetEntry(session.login, params.entryId, body);
 
   if (!updated) {
     return NextResponse.json({ error: "Entry not found" }, { status: 404 });
