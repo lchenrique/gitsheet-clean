@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
-import { Check, Copy, Download, RefreshCw, Table2 } from "lucide-react";
+import { Check, Copy, Download, Plus, RefreshCw, Table2 } from "lucide-react";
 import Papa from "papaparse";
 import * as XLSX from "xlsx";
 import { toast } from "sonner";
@@ -25,7 +25,7 @@ interface CellPoint {
 
 const columns: Array<{ key: ColumnKey; label: string; editable: boolean; multiline?: boolean; className?: string }> = [
   { key: "project", label: "Projeto", editable: true, className: "w-[280px]" },
-  { key: "date", label: "Data", editable: false, className: "w-[132px]" },
+  { key: "date", label: "Data", editable: true, className: "w-[152px]" },
   { key: "description", label: "Descrição", editable: true, multiline: true, className: "w-[860px]" },
   { key: "startTime", label: "Início", editable: true, className: "w-[110px]" },
   { key: "endTime", label: "Fim", editable: true, className: "w-[110px]" },
@@ -80,6 +80,11 @@ function normalizeTime(value: string, fallback: string) {
   }
 
   return `${pad(hours)}:${pad(minutes)}`;
+}
+
+function normalizeDate(value: string, fallback: string) {
+  const normalized = value.trim();
+  return /^\d{4}-\d{2}-\d{2}$/.test(normalized) ? normalized : fallback;
 }
 
 function getDurationLabel(startTime: string, endTime: string) {
@@ -337,7 +342,7 @@ export default function SheetPage() {
 
   const updateEntryValue = async (
     entryId: string,
-    field: "project" | "description" | "startTime" | "endTime",
+    field: "project" | "description" | "date" | "startTime" | "endTime",
     rawValue: string,
   ) => {
     const current = entries.find((entry) => entry.id === entryId);
@@ -346,7 +351,12 @@ export default function SheetPage() {
     }
 
     const patch =
-      field === "project"
+      field === "date"
+        ? (() => {
+            const nextDate = normalizeDate(rawValue, current.date);
+            return nextDate.startsWith(`${month}-`) ? { date: nextDate, sheetMonth: month } : { date: current.date };
+          })()
+        : field === "project"
         ? { project: rawValue.trim() || current.project }
         : field === "description"
           ? { description: rawValue.trim() || current.description }
@@ -370,6 +380,30 @@ export default function SheetPage() {
       toast.error("Não foi possível salvar a edição.");
       await loadSheet(month);
     }
+  };
+
+  const addManualEntry = async () => {
+    const defaultDate = month === getCurrentMonth() ? today : `${month}-01`;
+
+    const response = await fetch("/api/sheets/entries", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ month, date: defaultDate }),
+    });
+
+    if (!response.ok) {
+      toast.error("Não foi possível adicionar uma nova linha.");
+      return;
+    }
+
+    const payload = (await response.json()) as { entry: SheetEntryRecord };
+    setEntries((currentEntries) => [payload.entry, ...currentEntries]);
+    if (filter === "today" && payload.entry.date !== today) {
+      setFilter("all");
+    }
+    setSelectionStart(null);
+    setSelectionEnd(null);
+    toast.success("Linha manual adicionada.");
   };
 
   const getSelectedText = () => {
@@ -569,6 +603,10 @@ export default function SheetPage() {
                   </p>
                 </div>
                 <div className="flex flex-wrap gap-2">
+                  <Button variant="outline" size="sm" className="gap-2" onClick={() => void addManualEntry()}>
+                    <Plus className="h-4 w-4" />
+                    Adicionar linha
+                  </Button>
                   <Button variant="outline" size="sm" className="gap-2" onClick={() => void copySelectedCells()}>
                     <Copy className="h-4 w-4" />
                     Copiar seleção
@@ -631,7 +669,7 @@ export default function SheetPage() {
                             );
                           }
 
-                          const value = getCellValue(entry, column.key);
+                          const value = column.key === "date" ? entry.date : getCellValue(entry, column.key);
                           if (column.multiline) {
                             return (
                               <td
@@ -673,9 +711,14 @@ export default function SheetPage() {
                               }}
                             >
                               <input
+                                type={column.key === "date" ? "date" : column.key === "startTime" || column.key === "endTime" ? "time" : "text"}
                                 value={value}
                                 onChange={(event) =>
-                                  void updateEntryValue(entry.id, column.key as "project" | "startTime" | "endTime", event.target.value)
+                                  void updateEntryValue(
+                                    entry.id,
+                                    column.key as "date" | "project" | "startTime" | "endTime",
+                                    event.target.value,
+                                  )
                                 }
                                 className="w-full bg-transparent px-3 py-2 text-sm outline-none"
                               />

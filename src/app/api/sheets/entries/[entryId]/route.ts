@@ -3,7 +3,7 @@ import { auth } from "@/auth";
 import { updateSheetEntry } from "@/lib/sheet-store";
 import { SheetEntryRecord } from "@/types/timesheet";
 
-type PatchBody = Partial<Pick<SheetEntryRecord, "project" | "description" | "startTime" | "endTime" | "status">>;
+type PatchBody = Partial<Pick<SheetEntryRecord, "project" | "description" | "date" | "startTime" | "endTime" | "status">>;
 
 export async function PATCH(req: NextRequest, { params }: { params: { entryId: string } }) {
   const session = await auth();

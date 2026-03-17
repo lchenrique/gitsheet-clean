@@ -44,6 +44,15 @@ type UpsertSyncConfigInput = {
   githubAccessToken?: string;
 };
 
+type CreateManualSheetEntryInput = {
+  month: string;
+  date: string;
+  project?: string;
+  description?: string;
+  startTime?: string;
+  endTime?: string;
+};
+
 function mapSyncConfig(row: typeof syncConfigs.$inferSelect): SyncConfigRecord {
   return {
     userId: row.userId,
@@ -367,10 +376,56 @@ export async function persistDailyDraft(userId: string, date: string, entries: T
   await insertEntriesForDate(userId, date, entries, source, `daily:${date}`, "daily");
 }
 
+export async function createManualSheetEntry(userId: string, input: CreateManualSheetEntryInput): Promise<SheetEntryRecord> {
+  const db = getDb();
+  const timestamp = nowIso();
+  const id = crypto.randomUUID();
+
+  await ensureMonthlySheet(userId, input.month);
+
+  const project = input.project?.trim() || "Manual";
+  const description = input.description?.trim() || "Nova atividade";
+  const startTime = input.startTime || "09:00";
+  const endTime = input.endTime || "10:00";
+
+  await db.insert(sheetEntries).values({
+    id,
+    userId,
+    monthKey: input.month,
+    entryDate: input.date,
+    project,
+    description,
+    startTime,
+    endTime,
+    status: "draft",
+    source: "manual",
+    generationKey: `manual:${id}`,
+    syncKey: `manual:${id}`,
+    createdAt: timestamp,
+    updatedAt: timestamp,
+  });
+
+  return {
+    id,
+    sheetMonth: input.month,
+    date: input.date,
+    project,
+    description,
+    startTime,
+    endTime,
+    status: "draft",
+    source: "manual",
+    generationKey: `manual:${id}`,
+    syncKey: `manual:${id}`,
+    createdAt: timestamp,
+    updatedAt: timestamp,
+  };
+}
+
 export async function updateSheetEntry(
   userId: string,
   entryId: string,
-  patch: Partial<Pick<SheetEntryRecord, "project" | "description" | "startTime" | "endTime" | "status">>,
+  patch: Partial<Pick<SheetEntryRecord, "project" | "description" | "date" | "startTime" | "endTime" | "status">>,
 ) {
   const db = getDb();
   const rows = await db
@@ -386,6 +441,8 @@ export async function updateSheetEntry(
 
   await db.update(sheetEntries)
     .set({
+      monthKey: patch.date ? toMonthKey(patch.date) : current.monthKey,
+      entryDate: patch.date ?? current.entryDate,
       project: patch.project ?? current.project,
       description: patch.description ?? current.description,
       startTime: patch.startTime ?? current.startTime,
@@ -440,4 +497,3 @@ export async function resetUserWorkspace(userId: string) {
   await db.delete(syncRuns).where(eq(syncRuns.userId, userId));
   await db.delete(syncConfigs).where(eq(syncConfigs.userId, userId));
 }
-
