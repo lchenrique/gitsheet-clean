@@ -37,6 +37,7 @@ export type SheetEntrySource = "ai" | "manual" | "regenerated";
 
 export interface SheetEntryRecord extends TimesheetEntry {
   sheetMonth: string;
+  sortOrder?: number;
   status: SheetEntryStatus;
   source: SheetEntrySource;
   generationKey: string;

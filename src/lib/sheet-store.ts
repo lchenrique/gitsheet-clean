@@ -25,6 +25,16 @@ function toMonthKey(date: string) {
   return date.slice(0, 7);
 }
 
+async function getNextSortOrder(userId: string, month: string) {
+  const db = getDb();
+  const rows = await db
+    .select({ maxOrder: sql<number>`coalesce(max(${sheetEntries.sortOrder}), 0)` })
+    .from(sheetEntries)
+    .where(and(eq(sheetEntries.userId, userId), eq(sheetEntries.monthKey, month)));
+  const maxOrder = rows[0]?.maxOrder ?? 0;
+  return maxOrder + 1;
+}
+
 type UpsertSyncConfigInput = {
   userId: string;
   repos: SyncConfigRepo[];
@@ -286,7 +296,7 @@ export async function getSheetEntries(userId: string, month: string, todayDate?:
     .select()
     .from(sheetEntries)
     .where(and(eq(sheetEntries.userId, userId), eq(sheetEntries.monthKey, month)))
-    .orderBy(sheetEntries.entryDate, sheetEntries.startTime, sheetEntries.createdAt);
+    .orderBy(sheetEntries.sortOrder, sheetEntries.entryDate, sheetEntries.startTime, sheetEntries.createdAt, sheetEntries.id);
 
   return rows.map((row) => ({
     id: row.id,
@@ -296,6 +306,7 @@ export async function getSheetEntries(userId: string, month: string, todayDate?:
     description: row.description,
     startTime: row.startTime,
     endTime: row.endTime,
+    sortOrder: row.sortOrder,
     status: row.status as SheetEntryStatus,
     source: row.source as SheetEntrySource,
     generationKey: row.generationKey,
@@ -344,6 +355,8 @@ async function insertEntriesForDate(
     return;
   }
 
+  const nextSortOrder = await getNextSortOrder(userId, month);
+
   await db.insert(sheetEntries)
     .values(
       entries.map((entry, index) => ({
@@ -355,6 +368,7 @@ async function insertEntriesForDate(
         description: entry.description,
         startTime: entry.startTime,
         endTime: entry.endTime,
+        sortOrder: nextSortOrder + index,
         status: "draft",
         source,
         generationKey: `${generationKeyPrefix}:${date}:${index + 1}`,
@@ -382,6 +396,7 @@ export async function createManualSheetEntry(userId: string, input: CreateManual
   const id = crypto.randomUUID();
 
   await ensureMonthlySheet(userId, input.month);
+  const sortOrder = await getNextSortOrder(userId, input.month);
 
   const project = input.project?.trim() || "Manual";
   const description = input.description?.trim() || "Nova atividade";
@@ -397,6 +412,7 @@ export async function createManualSheetEntry(userId: string, input: CreateManual
     description,
     startTime,
     endTime,
+    sortOrder,
     status: "draft",
     source: "manual",
     generationKey: `manual:${id}`,
@@ -413,6 +429,7 @@ export async function createManualSheetEntry(userId: string, input: CreateManual
     description,
     startTime,
     endTime,
+    sortOrder,
     status: "draft",
     source: "manual",
     generationKey: `manual:${id}`,
@@ -439,14 +456,19 @@ export async function updateSheetEntry(
     return false;
   }
 
+  const nextMonthKey = patch.date ? toMonthKey(patch.date) : current.monthKey;
+  const nextSortOrder =
+    patch.date && nextMonthKey !== current.monthKey ? await getNextSortOrder(userId, nextMonthKey) : current.sortOrder;
+
   await db.update(sheetEntries)
     .set({
-      monthKey: patch.date ? toMonthKey(patch.date) : current.monthKey,
+      monthKey: nextMonthKey,
       entryDate: patch.date ?? current.entryDate,
       project: patch.project ?? current.project,
       description: patch.description ?? current.description,
       startTime: patch.startTime ?? current.startTime,
       endTime: patch.endTime ?? current.endTime,
+      sortOrder: nextSortOrder,
       status: patch.status ?? (current.status as SheetEntryStatus),
       source: "manual",
       updatedAt: nowIso(),
@@ -454,6 +476,74 @@ export async function updateSheetEntry(
     .where(and(eq(sheetEntries.userId, userId), eq(sheetEntries.id, entryId)));
 
   return true;
+}
+
+export async function moveSheetEntry(
+  userId: string,
+  entryId: string,
+  direction: "up" | "down",
+) {
+  const db = getDb();
+  const rows = await db
+    .select()
+    .from(sheetEntries)
+    .where(and(eq(sheetEntries.userId, userId), eq(sheetEntries.id, entryId)))
+    .limit(1);
+  const current = rows[0];
+
+  if (!current) {
+    return null;
+  }
+
+  const neighborRows = await db
+    .select()
+    .from(sheetEntries)
+    .where(
+      and(
+        eq(sheetEntries.userId, userId),
+        eq(sheetEntries.monthKey, current.monthKey),
+        direction === "up"
+          ? sql`
+              (${sheetEntries.sortOrder}, ${sheetEntries.entryDate}, ${sheetEntries.startTime}, ${sheetEntries.createdAt}, ${sheetEntries.id})
+              < (${current.sortOrder}, ${current.entryDate}, ${current.startTime}, ${current.createdAt}, ${current.id})
+            `
+          : sql`
+              (${sheetEntries.sortOrder}, ${sheetEntries.entryDate}, ${sheetEntries.startTime}, ${sheetEntries.createdAt}, ${sheetEntries.id})
+              > (${current.sortOrder}, ${current.entryDate}, ${current.startTime}, ${current.createdAt}, ${current.id})
+            `,
+      ),
+    )
+    .orderBy(
+      direction === "up" ? desc(sheetEntries.sortOrder) : sheetEntries.sortOrder,
+      direction === "up" ? desc(sheetEntries.entryDate) : sheetEntries.entryDate,
+      direction === "up" ? desc(sheetEntries.startTime) : sheetEntries.startTime,
+      direction === "up" ? desc(sheetEntries.createdAt) : sheetEntries.createdAt,
+      direction === "up" ? desc(sheetEntries.id) : sheetEntries.id,
+    )
+    .limit(1);
+  const neighbor = neighborRows[0];
+
+  if (!neighbor) {
+    return null;
+  }
+
+  await db.transaction(async (tx) => {
+    await tx
+      .update(sheetEntries)
+      .set({ sortOrder: neighbor.sortOrder, updatedAt: nowIso() })
+      .where(and(eq(sheetEntries.userId, userId), eq(sheetEntries.id, current.id)));
+    await tx
+      .update(sheetEntries)
+      .set({ sortOrder: current.sortOrder, updatedAt: nowIso() })
+      .where(and(eq(sheetEntries.userId, userId), eq(sheetEntries.id, neighbor.id)));
+  });
+
+  return {
+    currentId: current.id,
+    neighborId: neighbor.id,
+    currentSortOrder: current.sortOrder,
+    neighborSortOrder: neighbor.sortOrder,
+  };
 }
 
 export async function approveSheetEntries(userId: string, month: string, entryIds?: string[]) {
@@ -487,6 +577,16 @@ export async function markMonthExported(userId: string, month: string) {
       updatedAt: nowIso(),
     })
     .where(and(eq(sheetEntries.userId, userId), eq(sheetEntries.monthKey, month), inArray(sheetEntries.status, ["approved", "draft"])));
+}
+
+export async function deleteSheetEntry(userId: string, entryId: string) {
+  const db = getDb();
+  const result = await db
+    .delete(sheetEntries)
+    .where(and(eq(sheetEntries.userId, userId), eq(sheetEntries.id, entryId)))
+    .returning({ id: sheetEntries.id });
+
+  return result.length > 0;
 }
 
 export async function resetUserWorkspace(userId: string) {

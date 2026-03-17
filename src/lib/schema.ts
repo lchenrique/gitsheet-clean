@@ -1,4 +1,4 @@
-import { boolean, index, pgTable, primaryKey, text } from "drizzle-orm/pg-core";
+import { boolean, index, integer, pgTable, primaryKey, text } from "drizzle-orm/pg-core";
 
 export const syncConfigs = pgTable("sync_configs", {
   userId: text("user_id").primaryKey(),
@@ -46,6 +46,7 @@ export const sheetEntries = pgTable(
     description: text("description").notNull(),
     startTime: text("start_time").notNull(),
     endTime: text("end_time").notNull(),
+    sortOrder: integer("sort_order").notNull().default(0),
     status: text("status").notNull(),
     source: text("source").notNull(),
     generationKey: text("generation_key").notNull(),

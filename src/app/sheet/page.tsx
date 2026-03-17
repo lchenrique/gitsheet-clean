@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
-import { Check, Copy, Download, Plus, RefreshCw, Table2 } from "lucide-react";
+import { ArrowDown, ArrowUp, Check, Copy, Download, Plus, RefreshCw, Table2 } from "lucide-react";
 import Papa from "papaparse";
 import * as XLSX from "xlsx";
 import { toast } from "sonner";
@@ -161,6 +161,26 @@ function getRunStatusLabel(summary?: SyncStatusSummary | null) {
   return "Erro";
 }
 
+function sortEntriesByOrder(list: SheetEntryRecord[]) {
+  return [...list].sort((a, b) => {
+    const orderA = a.sortOrder ?? 0;
+    const orderB = b.sortOrder ?? 0;
+    if (orderA !== orderB) {
+      return orderA - orderB;
+    }
+    if (a.date !== b.date) {
+      return a.date.localeCompare(b.date);
+    }
+    if (a.startTime !== b.startTime) {
+      return a.startTime.localeCompare(b.startTime);
+    }
+    if (a.createdAt !== b.createdAt) {
+      return a.createdAt.localeCompare(b.createdAt);
+    }
+    return a.id.localeCompare(b.id);
+  });
+}
+
 export default function SheetPage() {
   const router = useRouter();
   const [isLoading, setIsLoading] = useState(true);
@@ -177,15 +197,23 @@ export default function SheetPage() {
 
   const today = getTodayDate();
 
+  const sortedEntries = useMemo(() => sortEntriesByOrder(entries), [entries]);
+
+  const entryPositions = useMemo(() => {
+    const map = new Map<string, number>();
+    sortedEntries.forEach((entry, index) => map.set(entry.id, index));
+    return map;
+  }, [sortedEntries]);
+
   const filteredEntries = useMemo(() => {
     if (filter === "today") {
-      return entries.filter((entry) => entry.date === today);
+      return sortedEntries.filter((entry) => entry.date === today);
     }
     if (filter === "pending") {
-      return entries.filter((entry) => entry.status === "draft");
+      return sortedEntries.filter((entry) => entry.status === "draft");
     }
-    return entries;
-  }, [entries, filter, today]);
+    return sortedEntries;
+  }, [filter, sortedEntries, today]);
 
   const range = useMemo(() => createRange(selectionStart, selectionEnd), [selectionStart, selectionEnd]);
 
@@ -483,6 +511,79 @@ export default function SheetPage() {
     toast.success("Linhas selecionadas aprovadas.");
   };
 
+  const deleteSelected = async () => {
+    if (!range) {
+      toast.error("Selecione linhas para excluir.");
+      return;
+    }
+
+    const ids = new Set<string>();
+    for (let rowIndex = range.startRow; rowIndex <= range.endRow; rowIndex += 1) {
+      const row = filteredEntries[rowIndex];
+      if (row) {
+        ids.add(row.id);
+      }
+    }
+
+    if (!ids.size) {
+      return;
+    }
+
+    if (!window.confirm(`Excluir ${ids.size} linha(s)?`)) {
+      return;
+    }
+
+    const results = await Promise.all(
+      Array.from(ids).map((id) =>
+        fetch(`/api/sheets/entries/${id}`, { method: "DELETE" }).then((res) => res.ok),
+      ),
+    );
+
+    if (results.some((ok) => !ok)) {
+      toast.error("Não foi possível excluir todas as linhas.");
+      await loadSheet(month);
+      return;
+    }
+
+    setEntries((currentEntries) => currentEntries.filter((entry) => !ids.has(entry.id)));
+    setSelectionStart(null);
+    setSelectionEnd(null);
+    toast.success("Linhas excluídas.");
+  };
+
+  const moveEntry = async (entryId: string, direction: "up" | "down") => {
+    const response = await fetch("/api/sheets/entries/reorder", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ entryId, direction }),
+    });
+
+    if (!response.ok) {
+      toast.error("Não foi possível mover a linha.");
+      await loadSheet(month);
+      return;
+    }
+
+    const payload = (await response.json()) as {
+      currentId: string;
+      neighborId: string;
+      currentSortOrder: number;
+      neighborSortOrder: number;
+    };
+
+    setEntries((currentEntries) =>
+      currentEntries.map((entry) => {
+        if (entry.id === payload.currentId) {
+          return { ...entry, sortOrder: payload.neighborSortOrder };
+        }
+        if (entry.id === payload.neighborId) {
+          return { ...entry, sortOrder: payload.currentSortOrder };
+        }
+        return entry;
+      }),
+    );
+  };
+
   const approveAllPending = async () => {
     const response = await fetch("/api/sheets/approve", {
       method: "POST",
@@ -615,6 +716,9 @@ export default function SheetPage() {
                     <Check className="h-4 w-4" />
                     Aprovar selecionadas
                   </Button>
+                  <Button variant="outline" size="sm" className="gap-2" onClick={() => void deleteSelected()}>
+                    Excluir selecionadas
+                  </Button>
                   <Button variant="outline" size="sm" className="gap-2" onClick={() => void refreshSheetContext(month)}>
                     <RefreshCw className="h-4 w-4" />
                     Recarregar
@@ -625,7 +729,7 @@ export default function SheetPage() {
 
             <div className="overflow-auto p-4 2xl:p-5">
               {filteredEntries.length ? (
-                <table className="min-w-[1700px] border-separate border-spacing-0 overflow-hidden rounded-xl border border-border">
+                <table className="min-w-[1780px] border-separate border-spacing-0 overflow-hidden rounded-xl border border-border">
                   <thead>
                     <tr className="bg-secondary/60">
                       {columns.map((column) => (
@@ -636,6 +740,9 @@ export default function SheetPage() {
                           {column.label}
                         </th>
                       ))}
+                      <th className="border-b border-border px-3 py-2 text-left text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                        Mover
+                      </th>
                     </tr>
                   </thead>
                   <tbody>
@@ -725,6 +832,34 @@ export default function SheetPage() {
                             </td>
                           );
                         })}
+                        <td className="border-b border-border px-2 py-2 text-center align-top">
+                          <div className="flex items-center justify-center gap-1">
+                            <Button
+                              type="button"
+                              size="icon"
+                              variant="ghost"
+                              disabled={(entryPositions.get(entry.id) ?? 0) <= 0}
+                              onClick={(event) => {
+                                event.stopPropagation();
+                                void moveEntry(entry.id, "up");
+                              }}
+                            >
+                              <ArrowUp className="h-4 w-4" />
+                            </Button>
+                            <Button
+                              type="button"
+                              size="icon"
+                              variant="ghost"
+                              disabled={(entryPositions.get(entry.id) ?? 0) >= sortedEntries.length - 1}
+                              onClick={(event) => {
+                                event.stopPropagation();
+                                void moveEntry(entry.id, "down");
+                              }}
+                            >
+                              <ArrowDown className="h-4 w-4" />
+                            </Button>
+                          </div>
+                        </td>
                       </tr>
                     ))}
                   </tbody>
