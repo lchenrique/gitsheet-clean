@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/auth";
-import { syncAllActiveUsersForDate, syncTodayForUser } from "@/lib/daily-sync";
+import { getCurrentSyncDate, syncAllActiveUsersForDate, syncTodayForUser } from "@/lib/daily-sync";
 
 export const runtime = "nodejs";
 
@@ -19,7 +19,7 @@ export async function GET(request: NextRequest) {
   }
 
   const requestedDate = request.nextUrl.searchParams.get("date");
-  const date = requestedDate || new Date().toISOString().slice(0, 10);
+  const date = requestedDate || getCurrentSyncDate();
 
   try {
     const results = await syncAllActiveUsersForDate(date);
@@ -50,8 +50,18 @@ export async function POST() {
   }
 
   try {
-    const result = await syncTodayForUser(session.login);
-    return NextResponse.json(result);
+    const results = await syncTodayForUser(session.login);
+    const synced = results.filter((result) => result.synced).length;
+    const failures = results.filter((result) => result.reason === "error").length;
+
+    return NextResponse.json({
+      ok: true,
+      trigger: "ui",
+      processed: results.length,
+      synced,
+      failures,
+      results,
+    });
   } catch (error) {
     return NextResponse.json(
       { error: error instanceof Error ? error.message : "Falha ao sincronizar o dia atual." },

@@ -145,7 +145,16 @@ const AppShell = ({ children, step }: AppShellProps) => {
       return;
     }
 
-    toast.success("Sync executado.");
+    const payload = (await response.json().catch(() => ({ processed: 0, synced: 0 }))) as {
+      processed?: number;
+      synced?: number;
+    };
+
+    toast.success(
+      payload.processed && payload.processed > 1
+        ? `Sync executado. ${payload.synced ?? 0} dia(s) sincronizado(s) em ${payload.processed} processado(s).`
+        : "Sync executado.",
+    );
     router.refresh();
     if (!isSheetPage) {
       router.push("/sheet");
@@ -220,7 +229,7 @@ const AppShell = ({ children, step }: AppShellProps) => {
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end" className="w-64">
               <DropdownMenuLabel>Workspace</DropdownMenuLabel>
-              <DropdownMenuItem onClick={() => router.push("/repos?reconfigure=1")}>
+              <DropdownMenuItem onClick={() => router.push("/config?reconfigure=1")}>
                 <Settings2 className="mr-2 h-4 w-4" />
                 Reconfigurar repositórios
               </DropdownMenuItem>

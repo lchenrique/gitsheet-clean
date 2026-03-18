@@ -1,11 +1,11 @@
-import { syncAllActiveUsersForDate } from "../src/lib/daily-sync";
+import { getCurrentSyncDate, syncAllActiveUsersForDate } from "../src/lib/daily-sync";
 
 const DAILY_SYNC_HOUR = Number(process.env.DAILY_SYNC_HOUR || 18);
 const DAILY_SYNC_MINUTE = Number(process.env.DAILY_SYNC_MINUTE || 0);
 const CHECK_INTERVAL_MS = Number(process.env.DAILY_SYNC_CHECK_INTERVAL_MS || 60_000);
 
 function getTodayDate() {
-  return new Date().toISOString().slice(0, 10);
+  return getCurrentSyncDate();
 }
 
 function shouldRunNow(now: Date) {
@@ -43,7 +43,7 @@ async function runWorkerLoop() {
 
   for (;;) {
     const now = new Date();
-    const date = now.toISOString().slice(0, 10);
+    const date = getCurrentSyncDate();
 
     if (shouldRunNow(now) && lastRunDate !== date) {
       lastRunDate = date;

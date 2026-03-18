@@ -15,6 +15,57 @@ import {
 import { sendTelegramReminder } from "@/lib/telegram";
 import { Commit, SyncConfigRecord, TimesheetEntry, TimeWindow } from "@/types/timesheet";
 
+const APP_TIMEZONE = process.env.APP_TIMEZONE || "America/Sao_Paulo";
+
+function formatDateInTimezone(date: Date) {
+  return new Intl.DateTimeFormat("en-CA", {
+    timeZone: APP_TIMEZONE,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(date);
+}
+
+export function getCurrentSyncDate() {
+  return formatDateInTimezone(new Date());
+}
+
+function addDays(date: string, days: number) {
+  const value = new Date(`${date}T12:00:00Z`);
+  value.setUTCDate(value.getUTCDate() + days);
+  return value.toISOString().slice(0, 10);
+}
+
+function resolvePendingStartDate(config: SyncConfigRecord) {
+  const lastProcessedDate = config.lastSuccessfulSyncDate || config.bootstrapEndDate;
+  if (lastProcessedDate) {
+    return addDays(lastProcessedDate, 1);
+  }
+
+  return getCurrentSyncDate();
+}
+
+async function markSyncProgress(config: SyncConfigRecord, date: string) {
+  await upsertSyncConfig({
+    userId: config.userId,
+    repos: config.repos,
+    includeSaturday: config.includeSaturday,
+    includeSunday: config.includeSunday,
+    telegramReminderEnabled: config.telegramReminderEnabled,
+    firstBlockStart: config.firstBlockStart,
+    firstBlockEnd: config.firstBlockEnd,
+    secondBlockStart: config.secondBlockStart,
+    secondBlockEnd: config.secondBlockEnd,
+    initialMonth: config.initialMonth,
+    bootstrapStartDate: config.bootstrapStartDate,
+    bootstrapEndDate: config.bootstrapEndDate,
+    lastSuccessfulSyncDate: date,
+    status: config.status,
+    githubPat: config.githubPat,
+    githubAccessToken: config.githubAccessToken,
+  });
+}
+
 function getAiResponseSchema(timeWindows: readonly TimeWindow[]) {
   return {
     type: "object",
@@ -278,16 +329,16 @@ export async function fetchCommitsForDate(date: string, config: SyncConfigRecord
 }
 
 export async function syncDateForConfig(config: SyncConfigRecord, date: string) {
-  return syncDateForConfigWithTrigger(config, date, "worker");
+  return syncSingleDateForConfig(config, date, "worker");
 }
 
 export async function syncTodayForUser(userId: string) {
   const config = await getSyncConfig(userId);
   if (!config || config.status !== "active") {
-    return { synced: false, reason: "missing-config" as const, userId };
+    return [{ synced: false, reason: "missing-config" as const, userId, date: getCurrentSyncDate() }];
   }
 
-  return syncDateForConfigWithTrigger(config, new Date().toISOString().slice(0, 10), "ui");
+  return syncPendingDatesForConfig(config, getCurrentSyncDate(), "ui");
 }
 
 export async function syncAllActiveUsersForDate(date: string) {
@@ -296,7 +347,7 @@ export async function syncAllActiveUsersForDate(date: string) {
 
   for (const config of configs) {
     try {
-      results.push(await syncDateForConfigWithTrigger(config, date, "worker"));
+      results.push(...(await syncPendingDatesForConfig(config, date, "worker")));
     } catch (error) {
       results.push({
         synced: false,
@@ -311,7 +362,32 @@ export async function syncAllActiveUsersForDate(date: string) {
   return results;
 }
 
-async function syncDateForConfigWithTrigger(
+export async function syncPendingDatesForConfig(
+  config: SyncConfigRecord,
+  endDate: string,
+  trigger: "ui" | "worker",
+) {
+  const results = [];
+  let currentDate = resolvePendingStartDate(config);
+
+  while (currentDate <= endDate) {
+    results.push(await syncSingleDateForConfig(config, currentDate, trigger));
+    currentDate = addDays(currentDate, 1);
+  }
+
+  if (results.length === 0) {
+    results.push({
+      synced: false,
+      reason: "up-to-date" as const,
+      date: endDate,
+      userId: config.userId,
+    });
+  }
+
+  return results;
+}
+
+async function syncSingleDateForConfig(
   config: SyncConfigRecord,
   date: string,
   trigger: "ui" | "worker",
@@ -330,6 +406,7 @@ async function syncDateForConfigWithTrigger(
       (dayOfWeek === 0 && !config.includeSunday);
 
     if (shouldSkip) {
+      await markSyncProgress(config, date);
       await recordSyncRun({
         userId: config.userId,
         runDate: date,
@@ -342,6 +419,7 @@ async function syncDateForConfigWithTrigger(
     }
 
     if (await hasEntriesForSyncKey(config.userId, syncKey)) {
+      await markSyncProgress(config, date);
       await recordSyncRun({
         userId: config.userId,
         runDate: date,
@@ -355,24 +433,7 @@ async function syncDateForConfigWithTrigger(
 
     const commits = filterRelevantCommits(await fetchCommitsForDate(date, config));
     if (!commits.length) {
-      await upsertSyncConfig({
-        userId: config.userId,
-        repos: config.repos,
-        includeSaturday: config.includeSaturday,
-        includeSunday: config.includeSunday,
-        telegramReminderEnabled: config.telegramReminderEnabled,
-        firstBlockStart: config.firstBlockStart,
-        firstBlockEnd: config.firstBlockEnd,
-        secondBlockStart: config.secondBlockStart,
-        secondBlockEnd: config.secondBlockEnd,
-        initialMonth: config.initialMonth,
-        bootstrapStartDate: config.bootstrapStartDate,
-        bootstrapEndDate: config.bootstrapEndDate,
-        lastSuccessfulSyncDate: date,
-        status: config.status,
-        githubPat: config.githubPat,
-        githubAccessToken: config.githubAccessToken,
-      });
+      await markSyncProgress(config, date);
       await recordSyncRun({
         userId: config.userId,
         runDate: date,
@@ -390,31 +451,14 @@ async function syncDateForConfigWithTrigger(
     }
 
     await persistDailyDraft(config.userId, date, entries);
-    await upsertSyncConfig({
-      userId: config.userId,
-      repos: config.repos,
-      includeSaturday: config.includeSaturday,
-      includeSunday: config.includeSunday,
-      telegramReminderEnabled: config.telegramReminderEnabled,
-      firstBlockStart: config.firstBlockStart,
-      firstBlockEnd: config.firstBlockEnd,
-      secondBlockStart: config.secondBlockStart,
-      secondBlockEnd: config.secondBlockEnd,
-      initialMonth: config.initialMonth,
-      bootstrapStartDate: config.bootstrapStartDate,
-      bootstrapEndDate: config.bootstrapEndDate,
-      lastSuccessfulSyncDate: date,
-      status: config.status,
-      githubPat: config.githubPat,
-      githubAccessToken: config.githubAccessToken,
-    });
+    await markSyncProgress(config, date);
     await recordSyncRun({
       userId: config.userId,
       runDate: date,
       trigger,
       status: "success",
       reason: "ok",
-      message: `${entries.length} entrada(s) gerada(s) para o dia.`,
+      message: `${commits.length} commit(s) processado(s), ${entries.length} entrada(s) gerada(s) para o dia.`,
     });
 
     if (config.telegramReminderEnabled) {
@@ -443,4 +487,3 @@ async function syncDateForConfigWithTrigger(
     throw error;
   }
 }
-
