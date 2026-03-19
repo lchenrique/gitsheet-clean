@@ -25,6 +25,12 @@ function toMonthKey(date: string) {
   return date.slice(0, 7);
 }
 
+function addDays(date: string, days: number) {
+  const value = new Date(`${date}T12:00:00Z`);
+  value.setUTCDate(value.getUTCDate() + days);
+  return value.toISOString().slice(0, 10);
+}
+
 async function getNextSortOrder(userId: string, month: string) {
   const db = getDb();
   const rows = await db
@@ -581,12 +587,61 @@ export async function markMonthExported(userId: string, month: string) {
 
 export async function deleteSheetEntry(userId: string, entryId: string) {
   const db = getDb();
+  const rows = await db
+    .select()
+    .from(sheetEntries)
+    .where(and(eq(sheetEntries.userId, userId), eq(sheetEntries.id, entryId)))
+    .limit(1);
+  const current = rows[0];
+
+  if (!current) {
+    return false;
+  }
+
   const result = await db
     .delete(sheetEntries)
     .where(and(eq(sheetEntries.userId, userId), eq(sheetEntries.id, entryId)))
     .returning({ id: sheetEntries.id });
 
-  return result.length > 0;
+  if (result.length === 0) {
+    return false;
+  }
+
+  // If the user removed the last generated row for a synced day, reopen progress
+  // so the next sync can regenerate that date.
+  if (current.syncKey.startsWith("daily:")) {
+    const remainingEntries = await db
+      .select({ id: sheetEntries.id })
+      .from(sheetEntries)
+      .where(and(eq(sheetEntries.userId, userId), eq(sheetEntries.entryDate, current.entryDate)))
+      .limit(1);
+
+    if (remainingEntries.length === 0) {
+      const config = await getSyncConfig(userId);
+      if (config?.lastSuccessfulSyncDate && config.lastSuccessfulSyncDate >= current.entryDate) {
+        await upsertSyncConfig({
+          userId,
+          repos: config.repos,
+          includeSaturday: config.includeSaturday,
+          includeSunday: config.includeSunday,
+          telegramReminderEnabled: config.telegramReminderEnabled,
+          firstBlockStart: config.firstBlockStart,
+          firstBlockEnd: config.firstBlockEnd,
+          secondBlockStart: config.secondBlockStart,
+          secondBlockEnd: config.secondBlockEnd,
+          initialMonth: config.initialMonth,
+          bootstrapStartDate: config.bootstrapStartDate,
+          bootstrapEndDate: config.bootstrapEndDate,
+          lastSuccessfulSyncDate: addDays(current.entryDate, -1),
+          status: config.status,
+          githubPat: config.githubPat,
+          githubAccessToken: config.githubAccessToken,
+        });
+      }
+    }
+  }
+
+  return true;
 }
 
 export async function resetUserWorkspace(userId: string) {

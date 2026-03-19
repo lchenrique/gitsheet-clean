@@ -93,11 +93,6 @@ export default function DateConfigPage() {
           return;
         }
 
-        if (payload.config && !allowReconfigure) {
-          router.replace("/sheet");
-          return;
-        }
-
         if (payload.config) {
           setSelectedRepos(
             payload.config.repos.map((repo) => ({
