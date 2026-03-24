@@ -36,16 +36,32 @@ function addDays(date: string, days: number) {
   return value.toISOString().slice(0, 10);
 }
 
+function getUtcDayRangeForTimezone(date: string) {
+  const [year, month, day] = date.split("-").map(Number);
+  const start = new Date(Date.UTC(year, month - 1, day, 3, 0, 0));
+  const end = new Date(Date.UTC(year, month - 1, day + 1, 2, 59, 59));
+  return {
+    since: start.toISOString().replace(".000Z", "Z"),
+    until: end.toISOString().replace(".000Z", "Z"),
+  };
+}
+
 function resolvePendingStartDate(config: SyncConfigRecord) {
-  const lastProcessedDate = config.lastSuccessfulSyncDate || config.bootstrapEndDate;
-  if (lastProcessedDate) {
-    return addDays(lastProcessedDate, 1);
+  // If there's a bootstrap, start from the bootstrap start date
+  if (config.bootstrapStartDate) {
+    return config.bootstrapStartDate;
+  }
+
+  // Otherwise start from the last date that had commits
+  const lastWithCommits = config.lastDateWithCommits;
+  if (lastWithCommits) {
+    return lastWithCommits;
   }
 
   return getCurrentSyncDate();
 }
 
-async function markSyncProgress(config: SyncConfigRecord, date: string) {
+async function markSyncProgress(config: SyncConfigRecord, date: string, hasCommits: boolean) {
   await upsertSyncConfig({
     userId: config.userId,
     repos: config.repos,
@@ -60,6 +76,7 @@ async function markSyncProgress(config: SyncConfigRecord, date: string) {
     bootstrapStartDate: config.bootstrapStartDate,
     bootstrapEndDate: config.bootstrapEndDate,
     lastSuccessfulSyncDate: date,
+    lastDateWithCommits: hasCommits ? date : config.lastDateWithCommits,
     status: config.status,
     githubPat: config.githubPat,
     githubAccessToken: config.githubAccessToken,
@@ -141,6 +158,53 @@ function normalizeProject(project: string, dayCommits: Commit[]) {
   return byShortName.get(cleaned.toLowerCase()) ?? cleaned;
 }
 
+function ensureTwoEntriesPerDay(
+  entries: TimesheetEntry[],
+  date: string,
+  dayCommits: Commit[],
+  timeWindows: readonly TimeWindow[],
+) {
+  if (entries.length >= 2) {
+    return entries;
+  }
+
+  const [morningWindow, afternoonWindow] = timeWindows;
+  const baseEntry = entries[0] ?? {
+    id: `${date}-1`,
+    project: normalizeProject("", dayCommits),
+    date,
+    description: normalizeCommitMessage(dayCommits[0]?.message ?? "Trabalho executado no período."),
+    startTime: morningWindow.start,
+    endTime: morningWindow.end,
+  };
+
+  const description = baseEntry.description.trim();
+  const project = baseEntry.project;
+
+  return [
+    {
+      ...baseEntry,
+      id: `${date}-1`,
+      project,
+      date,
+      description,
+      startTime: morningWindow.start,
+      endTime: morningWindow.end,
+    },
+    {
+      ...baseEntry,
+      id: `${date}-2`,
+      project,
+      date,
+      description: description.startsWith("Continuidade:")
+        ? description
+        : `Continuidade: ${description}`,
+      startTime: afternoonWindow.start,
+      endTime: afternoonWindow.end,
+    },
+  ];
+}
+
 function parseJsonContent(content: unknown) {
   if (typeof content === "string") {
     return JSON.parse(content) as { entries: Array<{ project: string; startTime: string; endTime: string; description: string }> };
@@ -202,7 +266,12 @@ function validateAiEntries(
     });
   }
 
-  return normalizedEntries.sort((a, b) => a.startTime.localeCompare(b.startTime));
+  return ensureTwoEntriesPerDay(
+    normalizedEntries.sort((a, b) => a.startTime.localeCompare(b.startTime)),
+    date,
+    dayCommits,
+    timeWindows,
+  );
 }
 
 async function generateEntriesWithProvider(date: string, dayCommits: Commit[], timeWindows: readonly TimeWindow[]) {
@@ -275,8 +344,10 @@ async function generateEntriesWithProvider(date: string, dayCommits: Commit[], t
   return validateAiEntries(parseJsonContent(data.choices?.[0]?.message?.content).entries, date, dayCommits, timeWindows);
 }
 
-function getCredential(config: SyncConfigRecord) {
-  return config.githubPat?.trim() || config.githubAccessToken?.trim() || "";
+function getCredentials(config: SyncConfigRecord) {
+  return [config.githubPat?.trim(), config.githubAccessToken?.trim()].filter(
+    (value, index, values): value is string => Boolean(value) && values.indexOf(value) === index,
+  );
 }
 
 function buildTelegramReminderMessage(date: string, entries: TimesheetEntry[]) {
@@ -290,42 +361,64 @@ function buildTelegramReminderMessage(date: string, entries: TimesheetEntry[]) {
 }
 
 export async function fetchCommitsForDate(date: string, config: SyncConfigRecord) {
-  const token = getCredential(config);
-  if (!token || config.status !== "active") {
+  const credentials = getCredentials(config);
+  if (!credentials.length || config.status !== "active") {
     return [];
   }
+  const { since, until } = getUtcDayRangeForTimezone(date);
+  let authFailed = false;
 
-  const headers = {
-    Authorization: `Bearer ${token}`,
-    Accept: "application/vnd.github+json",
-  };
+  for (const token of credentials) {
+    const headers = {
+      Authorization: `Bearer ${token}`,
+      Accept: "application/vnd.github+json",
+    };
 
-  const allCommits = await Promise.all(
-    config.repos.map(async (repo) => {
-      const branchParam = repo.selectedBranch ? `&sha=${encodeURIComponent(repo.selectedBranch)}` : "";
-      const url = `https://api.github.com/repos/${repo.fullName}/commits?author=${encodeURIComponent(config.userId)}&since=${date}T00:00:00Z&until=${date}T23:59:59Z&per_page=100${branchParam}`;
-      const response = await fetch(url, { headers, cache: "no-store" });
+    try {
+      const allCommits = await Promise.all(
+        config.repos.map(async (repo) => {
+          const branchParam = repo.selectedBranch ? `&sha=${encodeURIComponent(repo.selectedBranch)}` : "";
+          const url = `https://api.github.com/repos/${repo.fullName}/commits?author=${encodeURIComponent(config.userId)}&since=${since}&until=${until}&per_page=100${branchParam}`;
+          const response = await fetch(url, { headers, cache: "no-store" });
 
-      if (!response.ok) {
-        return [];
+          if (response.status === 401 || response.status === 403) {
+            authFailed = true;
+            throw new Error("github-auth");
+          }
+
+          if (!response.ok) {
+            throw new Error(`GitHub retornou ${response.status} ao consultar ${repo.fullName}.`);
+          }
+
+          const commits = (await response.json()) as Array<{
+            sha: string;
+            commit: { message: string; author: { date: string } };
+          }>;
+
+          return commits.map((commit) => ({
+            sha: commit.sha,
+            message: commit.commit.message.split("\n")[0],
+            repo: repo.fullName,
+            date: commit.commit.author.date,
+            branch: repo.selectedBranch || undefined,
+          }));
+        }),
+      );
+
+      return allCommits.flat();
+    } catch (error) {
+      if (error instanceof Error && error.message === "github-auth") {
+        continue;
       }
+      throw error;
+    }
+  }
 
-      const commits = (await response.json()) as Array<{
-        sha: string;
-        commit: { message: string; author: { date: string } };
-      }>;
+  if (authFailed) {
+    throw new Error("Não foi possível consultar o GitHub: credencial inválida ou sem permissão para os repositórios configurados.");
+  }
 
-      return commits.map((commit) => ({
-        sha: commit.sha,
-        message: commit.commit.message.split("\n")[0],
-        repo: repo.fullName,
-        date: commit.commit.author.date,
-        branch: repo.selectedBranch || undefined,
-      }));
-    }),
-  );
-
-  return allCommits.flat();
+  return [];
 }
 
 export async function syncDateForConfig(config: SyncConfigRecord, date: string) {
@@ -406,7 +499,7 @@ async function syncSingleDateForConfig(
       (dayOfWeek === 0 && !config.includeSunday);
 
     if (shouldSkip) {
-      await markSyncProgress(config, date);
+      await markSyncProgress(config, date, false);
       await recordSyncRun({
         userId: config.userId,
         runDate: date,
@@ -419,7 +512,7 @@ async function syncSingleDateForConfig(
     }
 
     if (await hasEntriesForSyncKey(config.userId, syncKey)) {
-      await markSyncProgress(config, date);
+      await markSyncProgress(config, date, false);
       await recordSyncRun({
         userId: config.userId,
         runDate: date,
@@ -433,7 +526,7 @@ async function syncSingleDateForConfig(
 
     const commits = filterRelevantCommits(await fetchCommitsForDate(date, config));
     if (!commits.length) {
-      await markSyncProgress(config, date);
+      await markSyncProgress(config, date, false);
       await recordSyncRun({
         userId: config.userId,
         runDate: date,
@@ -451,7 +544,7 @@ async function syncSingleDateForConfig(
     }
 
     await persistDailyDraft(config.userId, date, entries);
-    await markSyncProgress(config, date);
+    await markSyncProgress(config, date, true);
     await recordSyncRun({
       userId: config.userId,
       runDate: date,

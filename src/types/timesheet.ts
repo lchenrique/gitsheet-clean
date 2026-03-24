@@ -68,6 +68,7 @@ export interface SyncConfigRecord {
   bootstrapStartDate?: string;
   bootstrapEndDate?: string;
   lastSuccessfulSyncDate?: string;
+  lastDateWithCommits?: string;
   status: "active" | "disabled";
   githubPat?: string;
   githubAccessToken?: string;

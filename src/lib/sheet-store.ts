@@ -55,6 +55,7 @@ type UpsertSyncConfigInput = {
   bootstrapStartDate?: string;
   bootstrapEndDate?: string;
   lastSuccessfulSyncDate?: string;
+  lastDateWithCommits?: string;
   status?: "active" | "disabled";
   githubPat?: string;
   githubAccessToken?: string;
@@ -84,6 +85,7 @@ function mapSyncConfig(row: typeof syncConfigs.$inferSelect): SyncConfigRecord {
     bootstrapStartDate: row.bootstrapStartDate ?? undefined,
     bootstrapEndDate: row.bootstrapEndDate ?? undefined,
     lastSuccessfulSyncDate: row.lastSuccessfulSyncDate ?? undefined,
+    lastDateWithCommits: row.lastDateWithCommits ?? undefined,
     status: row.status as "active" | "disabled",
     githubPat: row.githubPat ?? undefined,
     githubAccessToken: row.githubAccessToken ?? undefined,
@@ -142,6 +144,7 @@ export async function upsertSyncConfig(config: UpsertSyncConfigInput) {
       bootstrapStartDate: config.bootstrapStartDate ?? current?.bootstrapStartDate ?? null,
       bootstrapEndDate: config.bootstrapEndDate ?? current?.bootstrapEndDate ?? null,
       lastSuccessfulSyncDate: config.lastSuccessfulSyncDate ?? current?.lastSuccessfulSyncDate ?? null,
+      lastDateWithCommits: config.lastDateWithCommits ?? current?.lastDateWithCommits ?? null,
       status: config.status ?? current?.status ?? "active",
       githubPat: config.githubPat ?? current?.githubPat ?? null,
       githubAccessToken: config.githubAccessToken ?? current?.githubAccessToken ?? null,
@@ -163,6 +166,7 @@ export async function upsertSyncConfig(config: UpsertSyncConfigInput) {
         bootstrapStartDate: config.bootstrapStartDate ?? current?.bootstrapStartDate ?? null,
         bootstrapEndDate: config.bootstrapEndDate ?? current?.bootstrapEndDate ?? null,
         lastSuccessfulSyncDate: config.lastSuccessfulSyncDate ?? current?.lastSuccessfulSyncDate ?? null,
+        lastDateWithCommits: config.lastDateWithCommits ?? current?.lastDateWithCommits ?? null,
         status: config.status ?? current?.status ?? "active",
         githubPat: config.githubPat ?? current?.githubPat ?? null,
         githubAccessToken: config.githubAccessToken ?? current?.githubAccessToken ?? null,

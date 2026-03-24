@@ -14,6 +14,7 @@ export const syncConfigs = pgTable("sync_configs", {
   bootstrapStartDate: text("bootstrap_start_date"),
   bootstrapEndDate: text("bootstrap_end_date"),
   lastSuccessfulSyncDate: text("last_successful_sync_date"),
+  lastDateWithCommits: text("last_date_with_commits"),
   status: text("status").notNull().default("active"),
   githubPat: text("github_pat"),
   githubAccessToken: text("github_access_token"),
