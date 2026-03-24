@@ -306,7 +306,7 @@ export async function getSheetEntries(userId: string, month: string, todayDate?:
     .select()
     .from(sheetEntries)
     .where(and(eq(sheetEntries.userId, userId), eq(sheetEntries.monthKey, month)))
-    .orderBy(sheetEntries.sortOrder, sheetEntries.entryDate, sheetEntries.startTime, sheetEntries.createdAt, sheetEntries.id);
+    .orderBy(sheetEntries.entryDate, sheetEntries.startTime, sheetEntries.sortOrder, sheetEntries.createdAt, sheetEntries.id);
 
   return rows.map((row) => ({
     id: row.id,
